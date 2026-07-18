@@ -10,6 +10,7 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
+  metadataBase: new URL(process.env.NEXT_PUBLIC_APP_URL || "https://ai-career-copilot-neon.vercel.app"),
   title: {
     default: `${siteConfig.name} — AI Powered Resume Review, Interview Coach & Career Optimization`,
     template: `%s | ${siteConfig.name}`,
