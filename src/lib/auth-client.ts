@@ -1,7 +1,17 @@
 import { createAuthClient } from "better-auth/react";
+import {
+  emailOTPClient,
+  magicLinkClient,
+  twoFactorClient,
+} from "better-auth/client/plugins";
 
 export const authClient = createAuthClient({
-  baseURL: process.env.NEXT_PUBLIC_BETTER_AUTH_URL,
+  baseURL: process.env.NEXT_PUBLIC_BETTER_AUTH_URL || process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000",
+  plugins: [
+    emailOTPClient(),
+    magicLinkClient(),
+    twoFactorClient(),
+  ],
 });
 
 export const {
@@ -10,4 +20,7 @@ export const {
   signOut,
   useSession,
   getSession,
+  emailOtp,
+  magicLink,
+  twoFactor,
 } = authClient;
