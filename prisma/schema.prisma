@@ -1,0 +1,528 @@
+// ============================================================================
+// AI Career Copilot — Prisma Schema
+// PostgreSQL · Better Auth compatible · Production-ready
+// ============================================================================
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["fullTextSearch"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================================
+// Enums
+// ============================================================================
+
+enum Role {
+  USER
+  ADMIN
+}
+
+enum Plan {
+  FREE
+  PRO
+  ENTERPRISE
+}
+
+enum SkillLevel {
+  BEGINNER
+  INTERMEDIATE
+  ADVANCED
+  EXPERT
+}
+
+enum ApplicationStatus {
+  SAVED
+  APPLIED
+  PHONE_SCREEN
+  INTERVIEW
+  OFFER
+  REJECTED
+  ACCEPTED
+  WITHDRAWN
+}
+
+enum InterviewType {
+  BEHAVIORAL
+  TECHNICAL
+  SYSTEM_DESIGN
+  CASE_STUDY
+  MOCK
+}
+
+enum InterviewMode {
+  AI_PRACTICE
+  REAL
+  PREPARATION
+}
+
+enum AIProvider {
+  OPENAI
+  GEMINI
+  CLAUDE
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  PAST_DUE
+  CANCELED
+  UNPAID
+  TRIALING
+}
+
+enum NotificationType {
+  SYSTEM
+  ACHIEVEMENT
+  REMINDER
+  AI_COMPLETE
+  REFERRAL
+}
+
+enum ReferralStatus {
+  PENDING
+  COMPLETED
+  EXPIRED
+}
+
+// ============================================================================
+// Better Auth — Core Tables
+// Field names must match Better Auth's expected schema exactly.
+// ============================================================================
+
+/// Core user record. Better Auth looks up users by `email`.
+model User {
+  id            String   @id @default(cuid())
+  name          String
+  email         String   @unique
+  emailVerified Boolean  @default(false)
+  image         String?
+  role          Role     @default(USER)
+  plan          Plan     @default(FREE)
+  credits       Int      @default(3)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // ── Relations ──
+  sessions      Session[]
+  accounts      Account[]
+  profile       Profile?
+  resumes       Resume[]
+  skills        Skill[]
+  applications  Application[]
+  interviews    Interview[]
+  aiHistory     AIHistory[]
+  subscription  Subscription?
+  notifications Notification[]
+  referralsMade Referral[]      @relation("Referrer")
+  referralsUsed Referral[]      @relation("Referred")
+  feedback      Feedback[]
+  blogPosts     BlogPost[]
+  auditLogs     AuditLog[]
+
+  @@index([email])
+  @@index([createdAt])
+  @@index([role])
+  @@index([plan])
+  @@map("user")
+}
+
+/// Active sessions. Better Auth manages lifecycle via `token` + `expiresAt`.
+model Session {
+  id        String   @id @default(cuid())
+  expiresAt DateTime
+  token     String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  ipAddress String?
+  userAgent String?
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([token])
+  @@map("session")
+}
+
+/// OAuth / credentials accounts. One user can have multiple providers.
+model Account {
+  id                    String    @id @default(cuid())
+  accountId             String
+  providerId            String
+  userId                String
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@index([userId])
+  @@index([providerId])
+  @@map("account")
+}
+
+/// Email / magic-link / OTP verification tokens.
+model Verification {
+  id         String   @id @default(cuid())
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([identifier])
+  @@map("verification")
+}
+
+// ============================================================================
+// Domain Models
+// ============================================================================
+
+/// Extended profile — one-to-one with User.
+model Profile {
+  id              String   @id @default(cuid())
+  userId          String   @unique
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  headline        String?
+  bio             String?  @db.Text
+  location        String?
+  linkedinUrl     String?
+  githubUrl       String?
+  portfolioUrl    String?
+  targetRole      String?
+  targetSalary    String?
+  targetLocation  String?
+  yearsExperience Int?
+  skills          Json?    @default("[]")
+  experience      Json?    @default("[]")
+  education       Json?    @default("[]")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([userId])
+  @@map("profile")
+}
+
+/// A tailored resume. Users may have many; one can be `isActive`.
+model Resume {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title     String
+  content   String   @db.Text
+  rawText   String?  @db.Text
+  fileUrl   String?
+  atsScore  Int?
+  version   Int      @default(1)
+  isActive  Boolean  @default(true)
+  keywords  Json?    @default("[]")
+  analysis  Json?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // ── Relations ──
+  versions     ResumeVersion[]
+  applications Application[]
+
+  @@index([userId])
+  @@index([userId, isActive])
+  @@index([createdAt])
+  @@map("resume")
+}
+
+/// Immutable snapshot each time a resume is modified.
+model ResumeVersion {
+  id        String   @id @default(cuid())
+  resumeId  String
+  resume    Resume   @relation(fields: [resumeId], references: [id], onDelete: Cascade)
+  content   String   @db.Text
+  atsScore  Int?
+  version   Int
+  diff      String?  @db.Text
+  createdAt DateTime @default(now())
+
+  @@index([resumeId])
+  @@index([resumeId, version])
+  @@map("resume_version")
+}
+
+/// Individual skill entry with proficiency level.
+model Skill {
+  id        String     @id @default(cuid())
+  userId    String
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name      String
+  level     SkillLevel @default(BEGINNER)
+  category  String?
+  verified  Boolean    @default(false)
+  source    String?
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  @@index([userId])
+  @@index([userId, name])
+  @@map("skill")
+}
+
+/// Job application tracker.
+model Application {
+  id          String            @id @default(cuid())
+  userId      String
+  user        User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  resumeId    String?
+  resume      Resume?           @relation(fields: [resumeId], references: [id], onDelete: SetNull)
+  company     String
+  position    String
+  url         String?
+  status      ApplicationStatus @default(SAVED)
+  salary      String?
+  appliedAt   DateTime?
+  notes       String?           @db.Text
+  coverLetter String?           @db.Text
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+
+  // ── Relations ──
+  interviews Interview[]
+
+  @@index([userId])
+  @@index([userId, status])
+  @@index([status])
+  @@index([createdAt])
+  @@map("application")
+}
+
+/// Interview session — either linked to an application or standalone practice.
+model Interview {
+  id            String        @id @default(cuid())
+  userId        String
+  user          User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  applicationId String?
+  application   Application?  @relation(fields: [applicationId], references: [id], onDelete: SetNull)
+  type          InterviewType
+  mode          InterviewMode
+  score         Int?
+  feedback      Json?
+  questions     Json?         @default("[]")
+  answers       Json?         @default("[]")
+  duration      Int?
+  createdAt     DateTime      @default(now())
+
+  @@index([userId])
+  @@index([userId, type])
+  @@index([createdAt])
+  @@map("interview")
+}
+
+/// Log of every AI call for auditing, cost tracking, and replay.
+model AIHistory {
+  id           String     @id @default(cuid())
+  userId       String
+  user         User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  feature      String
+  provider     AIProvider
+  systemPrompt String?    @db.Text
+  userPrompt   String     @db.Text
+  response     String     @db.Text
+  confidence   Float?
+  tokens       Int?
+  cost         Float?
+  createdAt    DateTime   @default(now())
+
+  @@index([userId])
+  @@index([userId, feature])
+  @@index([provider])
+  @@index([createdAt])
+  @@map("ai_history")
+}
+
+// ============================================================================
+// Billing
+// ============================================================================
+
+/// Stripe subscription — one-to-one with User.
+model Subscription {
+  id                   String             @id @default(cuid())
+  userId               String             @unique
+  user                 User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  plan                 Plan               @default(FREE)
+  stripeCustomerId     String?            @unique
+  stripeSubscriptionId String?            @unique
+  stripePriceId        String?
+  status               SubscriptionStatus @default(ACTIVE)
+  currentPeriodStart   DateTime?
+  currentPeriodEnd     DateTime?
+  cancelAtPeriodEnd    Boolean            @default(false)
+  createdAt            DateTime           @default(now())
+  updatedAt            DateTime           @updatedAt
+
+  // ── Relations ──
+  payments Payment[]
+
+  @@index([userId])
+  @@index([status])
+  @@index([stripeCustomerId])
+  @@map("subscription")
+}
+
+/// Individual payment record tied to a subscription.
+model Payment {
+  id              String       @id @default(cuid())
+  subscriptionId  String
+  subscription    Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+  stripePaymentId String       @unique
+  amount          Int
+  currency        String       @default("usd")
+  status          String
+  createdAt       DateTime     @default(now())
+
+  @@index([subscriptionId])
+  @@index([createdAt])
+  @@map("payment")
+}
+
+// ============================================================================
+// Engagement & Growth
+// ============================================================================
+
+/// In-app notifications.
+model Notification {
+  id        String           @id @default(cuid())
+  userId    String
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      NotificationType @default(SYSTEM)
+  title     String
+  message   String
+  read      Boolean          @default(false)
+  link      String?
+  createdAt DateTime         @default(now())
+
+  @@index([userId])
+  @@index([userId, read])
+  @@index([createdAt])
+  @@map("notification")
+}
+
+/// Referral programme tracking.
+model Referral {
+  id         String         @id @default(cuid())
+  referrerId String
+  referrer   User           @relation("Referrer", fields: [referrerId], references: [id], onDelete: Cascade)
+  referredId String?
+  referred   User?          @relation("Referred", fields: [referredId], references: [id], onDelete: SetNull)
+  code       String         @unique
+  reward     Int            @default(0)
+  status     ReferralStatus @default(PENDING)
+  createdAt  DateTime       @default(now())
+
+  @@index([referrerId])
+  @@index([code])
+  @@index([status])
+  @@map("referral")
+}
+
+/// User feedback on individual features.
+model Feedback {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  feature   String
+  rating    Int
+  comment   String?  @db.Text
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([feature])
+  @@index([createdAt])
+  @@map("feedback")
+}
+
+// ============================================================================
+// Content / Blog
+// ============================================================================
+
+/// Blog post authored by an admin / staff user.
+model BlogPost {
+  id             String   @id @default(cuid())
+  authorId       String
+  author         User     @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  title          String
+  slug           String   @unique
+  content        String   @db.Text
+  excerpt        String?
+  category       String?
+  tags           Json?    @default("[]")
+  coverImage     String?
+  published      Boolean  @default(false)
+  seoTitle       String?
+  seoDescription String?
+  views          Int      @default(0)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([slug])
+  @@index([authorId])
+  @@index([published])
+  @@index([category])
+  @@index([createdAt])
+  @@map("blog_post")
+}
+
+/// Standalone blog category lookup table.
+model BlogCategory {
+  id          String   @id @default(cuid())
+  name        String
+  slug        String   @unique
+  description String?
+  createdAt   DateTime @default(now())
+
+  @@index([slug])
+  @@map("blog_category")
+}
+
+// ============================================================================
+// Admin / Ops
+// ============================================================================
+
+/// Immutable audit trail for compliance and debugging.
+model AuditLog {
+  id        String   @id @default(cuid())
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  action    String
+  entity    String
+  entityId  String?
+  metadata  Json?
+  ipAddress String?
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([entity, entityId])
+  @@index([action])
+  @@index([createdAt])
+  @@map("audit_log")
+}
+
+/// Runtime feature flags with optional percentage rollout.
+model FeatureFlag {
+  id          String   @id @default(cuid())
+  key         String   @unique
+  name        String
+  description String?
+  enabled     Boolean  @default(false)
+  percentage  Int      @default(100)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([key])
+  @@map("feature_flag")
+}
