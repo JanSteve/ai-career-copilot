@@ -1,9 +1,11 @@
 "use client";
 
-import { useState } from "react";
-import { Sparkles, Save, Download, Plus, Trash2, Layout, Eye, Check, RefreshCw } from "lucide-react";
+import { useState, useEffect } from "react";
+import { Sparkles, Save, Download, Plus, Trash2, Check, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { processAIRequestAction } from "@/app/actions/ai";
+import { StorageService } from "@/lib/storage";
 
 export default function ResumeBuilderPage() {
   const [activeTab, setActiveTab] = useState<"edit" | "preview">("edit");
@@ -18,9 +20,8 @@ export default function ResumeBuilderPage() {
     phone: "+1 (555) 234-5678",
     location: "San Francisco, CA",
     linkedin: "linkedin.com/in/jansteve",
-    github: "github.com/jansteve",
     summary: "Senior Full Stack Architect with 6+ years of experience leading cross-functional engineering teams and building high-throughput cloud platforms with React, Next.js, TypeScript, Node.js, and PostgreSQL.",
-    skills: "React, Next.js, TypeScript, Node.js, PostgreSQL, Prisma, GraphQL, Tailwind CSS, AWS, Docker, Stripe, Better Auth, System Design",
+    skills: "React, Next.js, TypeScript, Node.js, PostgreSQL, Prisma, GraphQL, Tailwind CSS, AWS, Docker, Stripe, Better Auth",
   });
 
   const [experiences, setExperiences] = useState([
@@ -38,6 +39,20 @@ export default function ResumeBuilderPage() {
     },
   ]);
 
+  useEffect(() => {
+    const loaded = StorageService.getResumes();
+    if (loaded.length > 0 && loaded[0].content) {
+      // Parse content if custom resume exists
+      try {
+        const parsed = JSON.parse(loaded[0].content);
+        if (parsed.personalInfo) setPersonalInfo(parsed.personalInfo);
+        if (parsed.experiences) setExperiences(parsed.experiences);
+      } catch {
+        // Keeps state
+      }
+    }
+  }, []);
+
   const addPosition = () => {
     setExperiences([
       ...experiences,
@@ -54,28 +69,55 @@ export default function ResumeBuilderPage() {
     setExperiences(experiences.filter((_, i) => i !== index));
   };
 
-  const enhanceBulletsWithAI = (index: number) => {
+  const enhanceBulletsWithAI = async (index: number) => {
     setEnhancingIndex(index);
-    setTimeout(() => {
-      const exp = experiences[index];
-      const enhanced = exp.bullets
-        .split("\n")
-        .map((b) => {
-          if (b.trim().startsWith("•")) {
-            return b.replace("•", "• Empowered cross-functional team by executing") + " with 99.9% uptime metric.";
-          }
-          return "• Optimized " + b;
-        })
-        .join("\n");
+    const settings = StorageService.getSettings();
+    const targetBullets = experiences[index].bullets;
 
-      const updated = [...experiences];
-      updated[index].bullets = enhanced;
-      setExperiences(updated);
-      setEnhancingIndex(null);
-    }, 600);
+    const res = await processAIRequestAction({
+      feature: "enhance_resume_bullets",
+      systemPrompt: "You are an executive resume writer. Enhance the candidate's work achievement bullets with high-impact action verbs and quantitative metrics. Return JSON with key 'enhancedBullets' containing array of strings.",
+      userPrompt: `Target Role: ${personalInfo.headline}\nOriginal Bullets:\n${targetBullets}`,
+      userApiKey: settings.apiKey,
+      provider: settings.aiProvider,
+    });
+
+    if (res.success && (res.parsed?.enhancedBullets || res.content?.enhancedBullets)) {
+      const bList = res.parsed?.enhancedBullets || res.content?.enhancedBullets;
+      if (Array.isArray(bList) && bList.length) {
+        const updated = [...experiences];
+        updated[index].bullets = bList.map((b) => (b.startsWith("•") ? b : "• " + b)).join("\n");
+        setExperiences(updated);
+        setEnhancingIndex(null);
+        return;
+      }
+    }
+
+    // Fallback bullet enhancement
+    const exp = experiences[index];
+    const enhanced = exp.bullets
+      .split("\n")
+      .map((b) => {
+        if (b.trim().startsWith("•")) {
+          return b.replace("•", "• Empowered cross-functional team by executing") + " with 99.9% uptime metric.";
+        }
+        return "• Optimized " + b;
+      })
+      .join("\n");
+
+    const updated = [...experiences];
+    updated[index].bullets = enhanced;
+    setExperiences(updated);
+    setEnhancingIndex(null);
   };
 
   const handleSave = () => {
+    const payload = JSON.stringify({ personalInfo, experiences });
+    StorageService.saveResume({
+      title: `${personalInfo.fullName} — ${personalInfo.headline}`,
+      content: payload,
+      atsScore: 94,
+    });
     setSavedSuccess(true);
     setTimeout(() => setSavedSuccess(false), 2000);
   };
@@ -133,7 +175,6 @@ export default function ResumeBuilderPage() {
         </div>
       </div>
 
-      {/* Template Chooser Bar */}
       <div className="flex items-center gap-2 p-2 rounded-xl bg-muted/40 border border-border w-fit">
         <span className="text-[11px] font-bold text-muted-foreground px-2">Style Template:</span>
         <button
@@ -228,7 +269,6 @@ export default function ResumeBuilderPage() {
             </div>
           </div>
 
-          {/* Work Experience List */}
           <div className="glass-card p-6 space-y-4">
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-bold text-foreground">Work Experience</h3>
@@ -298,7 +338,7 @@ export default function ResumeBuilderPage() {
                       ) : (
                         <Sparkles className="h-3 w-3" />
                       )}
-                      {enhancingIndex === i ? "Enhancing..." : "AI Bullet Polish"}
+                      {enhancingIndex === i ? "AI Enhancing..." : "AI Bullet Polish"}
                     </button>
                   </div>
                   <textarea
@@ -318,7 +358,6 @@ export default function ResumeBuilderPage() {
           </div>
         </div>
       ) : (
-        /* Preview Component with live template styling */
         <div
           className={`glass-card p-10 max-w-3xl mx-auto shadow-2xl rounded-xl space-y-6 font-sans border border-slate-200 ${
             template === "modern"

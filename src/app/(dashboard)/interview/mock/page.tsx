@@ -1,10 +1,11 @@
 "use client";
 
 import { useState } from "react";
-import { Bot, Sparkles, Send, CheckCircle2, RefreshCw, Award, Play, ChevronRight, CornerDownRight } from "lucide-react";
+import { Bot, Sparkles, Send, CheckCircle2, RefreshCw, Award, Play, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { generateAIResponse, getInterviewFeedbackPrompt, getInterviewQuestionsPrompt } from "@/services/ai";
+import { processAIRequestAction } from "@/app/actions/ai";
+import { StorageService } from "@/lib/storage";
 
 const MOCK_PANELS = [
   {
@@ -13,23 +14,20 @@ const MOCK_PANELS = [
     question: "Describe a complex situation where you had to balance severe technical debt with shipping a mission-critical feature under tight deadline pressure.",
     context: "Evaluates prioritization, trade-off communication with stakeholders, and pragmatic software engineering decisions.",
     sampleAnswer: "Situation: At my prior tech lead role, our legacy monolithic API was suffering from high latency during peak traffic right when sales signed a 6-figure enterprise client requiring a new dashboard feature in 3 weeks.\n\nTask: I was tasked with delivering the enterprise feature while preventing API crashes during peak loads.\n\nAction: I implemented a two-pronged strategy. First, I introduced a Redis caching layer for top database queries, taking 3 hours to implement and dropping database load by 55%. Second, I built the new feature using isolated Next.js Server Components.\n\nResult: We launched the enterprise feature 2 days ahead of schedule, achieved 99.99% API uptime during peak traffic, and secured the contract.",
-    sampleTips: ["Specify the exact metrics before/after", "Clarify team communication", "Highlight STAR structure"],
   },
   {
     id: "2",
     category: "SYSTEM_DESIGN",
     question: "How would you design a multi-region, distributed rate limiter handling 500,000 requests per second with microsecond latency requirements?",
     context: "Tests distributed systems architecture, concurrency primitives, Redis sliding window algorithms, and global data sync strategies.",
-    sampleAnswer: "To design a rate limiter at 500k RPS, I would employ a local token bucket algorithm combined with a centralized Redis cluster for global synchronization. Edge nodes running at Cloudflare/Vercel handles rate limit evaluation locally using in-memory token buckets refreshed asynchronously via Redis pub/sub. This keeps latency < 2ms while preventing global database bottlenecks.",
-    sampleTips: ["Address race conditions", "Compare Token Bucket vs Sliding Window Log", "Discuss fallback strategies during Redis outage"],
+    sampleAnswer: "To design a rate limiter at 500k RPS, I would employ a local token bucket algorithm combined with a centralized Redis cluster for global synchronization. Edge nodes running at Cloudflare/Vercel handles rate limit evaluation locally using in-memory token buckets refreshed asynchronously via Redis pub/sub.",
   },
   {
     id: "3",
     category: "TECHNICAL_DEEP_DIVE",
     question: "Explain how React 19 Server Components and Server Actions change data fetching and hydration compared to traditional Client-side rendering.",
     context: "Assesses deep frontend framework knowledge, bundle optimization, and modern rendering paradigms.",
-    sampleAnswer: "React Server Components execute strictly on the server during request time and emit a zero-bundle-size serialized UI stream. Unlike traditional SSR which requires full client-side JS bundle hydration for static HTML trees, RSCs allow components to access databases directly on the server without sending component source code to the client. Server Actions provide type-safe RPC endpoints built into Next.js routing.",
-    sampleTips: ["Explain serialization boundaries", "Differentiate SSR vs RSC", "Discuss security advantages"],
+    sampleAnswer: "React Server Components execute strictly on the server during request time and emit a zero-bundle-size serialized UI stream. Unlike traditional SSR which requires full client-side JS bundle hydration for static HTML trees, RSCs allow components to access databases directly on the server without sending component source code to the client.",
   },
 ];
 
@@ -46,25 +44,27 @@ export default function MockInterviewPage() {
 
   const startSession = async () => {
     setLoading(true);
-    try {
-      const { systemPrompt, userPrompt, schema } = getInterviewQuestionsPrompt(role, level);
-      const res = await generateAIResponse(
-        {
-          systemPrompt,
-          userPrompt,
-          jsonMode: true,
-        },
-        schema
-      );
-      if (res.parsed?.questions?.length) {
-        setQuestions(res.parsed.questions);
+    const settings = StorageService.getSettings();
+
+    const result = await processAIRequestAction({
+      feature: "generate_interview_questions",
+      systemPrompt: "You are a VP of Engineering conducting technical & STAR behavioral interviews. Generate 3 high-signal interview questions for the specified target role and seniority level. Return JSON with key 'questions' containing array of objects: id, category, question, context, sampleAnswer.",
+      userPrompt: `Target Role: ${role}, Level: ${level}`,
+      userApiKey: settings.apiKey,
+      provider: settings.aiProvider,
+    });
+
+    const parsedAny = result.parsed as any;
+    const contentAny = result.content as any;
+
+    if (result.success && (parsedAny?.questions || contentAny?.questions)) {
+      const q = parsedAny?.questions || contentAny?.questions;
+      if (Array.isArray(q) && q.length) {
+        setQuestions(q);
       }
-    } catch (e) {
-      // Keep rich default questions panel
-    } finally {
-      setStarted(true);
-      setLoading(false);
     }
+    setStarted(true);
+    setLoading(false);
   };
 
   const loadSampleAnswer = () => {
@@ -74,49 +74,47 @@ export default function MockInterviewPage() {
   const submitAnswer = async () => {
     if (!userAnswer.trim()) return;
     setEvaluating(true);
+    const settings = StorageService.getSettings();
 
-    try {
-      const q = questions[currentIdx];
-      const { systemPrompt, userPrompt, schema } = getInterviewFeedbackPrompt(
-        q.question,
-        userAnswer,
-        role
-      );
-      const res = await generateAIResponse(
-        {
-          systemPrompt,
-          userPrompt,
-          jsonMode: true,
-        },
-        schema
-      );
-      setFeedbacks((prev) => ({
-        ...prev,
-        [currentIdx]: res.parsed || res.content,
-      }));
-    } catch (e) {
-      // Local STAR evaluator fallback calculation
+    const q = questions[currentIdx];
+
+    const result = await processAIRequestAction({
+      feature: "evaluate_interview_answer",
+      systemPrompt: "You are an executive interview coach. Evaluate candidate's interview response using STAR framework. Return JSON with keys: overallScore (number 0-100), detailedFeedback (string), strengths (array of strings), areasForImprovement (array of strings).",
+      userPrompt: `QUESTION: ${q.question}\n\nCANDIDATE ANSWER:\n${userAnswer}`,
+      userApiKey: settings.apiKey,
+      provider: settings.aiProvider,
+    });
+
+    let fbData: any;
+    if (result.success) {
+      fbData = result.parsed || (typeof result.content === "object" ? result.content : null);
+    }
+
+    if (!fbData) {
       const hasMetric = /\b\d+(%|k|M|ms|s|\$)?\b/i.test(userAnswer);
       const hasAction = /action|i (built|implemented|led|spearheaded|architected|introduced)/i.test(userAnswer);
       const score = Math.min(98, Math.max(70, (hasMetric ? 25 : 10) + (hasAction ? 35 : 20) + Math.min(38, Math.round(userAnswer.length / 10))));
 
-      setFeedbacks((prev) => ({
-        ...prev,
-        [currentIdx]: {
-          overallScore: score,
-          detailedFeedback: `Excellent execution! Your response clearly structured the technical context and demonstrated decisive leadership. ${
-            hasMetric ? "The quantitative metrics effectively validated your impact." : "Consider adding specific numbers or percentage improvements."
-          }`,
-          strengths: ["Strong problem statement", "Clear architectural choices highlighted", "Pragmatic decision making"],
-          areasForImprovement: [
-            "Quantify precise team size or user scale impacted.",
-            "Briefly mention alternative solutions considered before choosing the final architecture.",
-          ],
-        },
-      }));
-    } finally {
-      setEvaluating(false);
+      fbData = {
+        overallScore: score,
+        detailedFeedback: `Excellent execution! Your response clearly structured the technical context and demonstrated decisive leadership. ${
+          hasMetric ? "The quantitative metrics effectively validated your impact." : "Consider adding specific numbers or percentage improvements."
+        }`,
+        strengths: ["Strong problem statement", "Clear architectural choices highlighted", "Pragmatic decision making"],
+        areasForImprovement: ["Quantify precise team size or user scale impacted."],
+      };
     }
+
+    setFeedbacks((prev) => ({ ...prev, [currentIdx]: fbData }));
+
+    StorageService.saveInterview({
+      role: role,
+      overallScore: fbData.overallScore || 90,
+      questionsCount: questions.length,
+    });
+
+    setEvaluating(false);
   };
 
   return (
@@ -167,7 +165,6 @@ export default function MockInterviewPage() {
         </div>
       ) : (
         <div className="space-y-6 animate-fade-in">
-          {/* Stepper Header */}
           <div className="flex items-center justify-between pb-3 border-b border-border">
             <span className="text-xs font-bold text-muted-foreground">
               Question {currentIdx + 1} of {questions.length}
@@ -185,7 +182,6 @@ export default function MockInterviewPage() {
             </div>
           </div>
 
-          {/* Question Card */}
           <div className="glass-card p-6 space-y-3 border-purple-500/30">
             <div className="flex items-center justify-between">
               <span className="px-2.5 py-0.5 rounded-full bg-purple-500/15 text-purple-400 text-[10px] font-bold border border-purple-500/20">
@@ -204,7 +200,6 @@ export default function MockInterviewPage() {
             <p className="text-xs text-muted-foreground">{questions[currentIdx]?.context}</p>
           </div>
 
-          {/* Answer Input */}
           <div className="space-y-3">
             <label className="text-xs font-bold text-foreground">Your Response (Apply STAR Structure)</label>
             <textarea
@@ -240,7 +235,6 @@ export default function MockInterviewPage() {
             </div>
           </div>
 
-          {/* Feedback Section */}
           {feedbacks[currentIdx] && (
             <div className="glass-card p-6 space-y-5 border-emerald-500/30 animate-fade-in">
               <div className="flex items-center justify-between p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/20">
@@ -251,7 +245,7 @@ export default function MockInterviewPage() {
                   </div>
                 </div>
                 <span className="px-3 py-1 rounded-full bg-emerald-500/20 text-emerald-400 text-xs font-bold">
-                  High Impact STAR Answer
+                  Saved to Interview Metrics
                 </span>
               </div>
 

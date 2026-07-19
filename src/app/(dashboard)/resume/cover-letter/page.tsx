@@ -4,7 +4,8 @@ import { useState } from "react";
 import { Zap, Sparkles, Copy, Check, RefreshCw, Sliders } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { generateAIResponse, getCoverLetterPrompt } from "@/services/ai";
+import { processAIRequestAction } from "@/app/actions/ai";
+import { StorageService } from "@/lib/storage";
 
 export default function CoverLetterPage() {
   const [company, setCompany] = useState("Vercel");
@@ -34,27 +35,28 @@ export default function CoverLetterPage() {
   const handleGenerate = async () => {
     if (!company || !position || !resumeText || !jobDescription) return;
     setLoading(true);
+    const settings = StorageService.getSettings();
 
-    try {
-      const { systemPrompt, userPrompt, schema } = getCoverLetterPrompt(
-        resumeText,
-        jobDescription,
-        company,
-        position
-      );
-      const res = await generateAIResponse(
-        {
-          systemPrompt: systemPrompt + ` Use a ${tone} tone of voice.`,
-          userPrompt,
-          jsonMode: true,
-        },
-        schema
-      );
-      setResult(res.parsed || res.content);
-    } catch (e) {
-      // Local intelligent fallback generator
-      const dateStr = new Date().toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
-      const coverLetter = `Jan Steve Daniel
+    const aiRes = await processAIRequestAction({
+      feature: "generate_cover_letter",
+      systemPrompt: `You are an expert executive cover letter writer. Generate a highly persuasive, customized cover letter for the specified company and role using a ${tone} tone of voice. Return JSON with keys: coverLetterText (string), matchingPoints (array of strings), customizedForCompany (string).`,
+      userPrompt: `COMPANY: ${company}\nPOSITION: ${position}\nJOB DESCRIPTION:\n${jobDescription}\n\nRESUME:\n${resumeText}`,
+      userApiKey: settings.apiKey,
+      provider: settings.aiProvider,
+    });
+
+    if (aiRes.success && (aiRes.parsed || aiRes.content)) {
+      const data = aiRes.parsed || (typeof aiRes.content === "object" ? aiRes.content : null);
+      if (data) {
+        setResult(data);
+        setLoading(false);
+        return;
+      }
+    }
+
+    // Fallback letter generator
+    const dateStr = new Date().toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
+    const coverLetter = `Jan Steve Daniel
 San Francisco, CA | jansteve@example.com
 
 ${dateStr}
@@ -76,18 +78,17 @@ Warm regards,
 
 Jan Steve Daniel`;
 
-      setResult({
-        coverLetterText: coverLetter,
-        matchingPoints: [
-          `Aligned 6+ years of full-stack experience with ${position} requirements`,
-          `Highlighted Next.js, TypeScript & PostgreSQL technical stack`,
-          `Emphasized 45% latency reduction metric and high-throughput systems expertise`,
-        ],
-        customizedForCompany: company,
-      });
-    } finally {
-      setLoading(false);
-    }
+    setResult({
+      coverLetterText: coverLetter,
+      matchingPoints: [
+        `Aligned 6+ years of full-stack experience with ${position} requirements`,
+        `Highlighted Next.js, TypeScript & PostgreSQL technical stack`,
+        `Emphasized 45% latency reduction metric and high-throughput systems expertise`,
+      ],
+      customizedForCompany: company,
+    });
+
+    setLoading(false);
   };
 
   const copyToClipboard = () => {
@@ -139,7 +140,6 @@ Jan Steve Daniel`;
         </div>
       </div>
 
-      {/* Tone Chooser */}
       <div className="space-y-1.5">
         <label className="text-xs font-medium text-foreground flex items-center gap-1.5">
           <Sliders className="h-3.5 w-3.5 text-primary" /> Select Writing Tone

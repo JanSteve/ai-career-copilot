@@ -1,68 +1,15 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Plus, Search, Filter, Briefcase, Calendar, DollarSign, Trash2, CheckCircle2, Building2, MapPin } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { StorageService, SavedApplication } from "@/lib/storage";
 
 type StatusType = "SAVED" | "APPLIED" | "PHONE_SCREEN" | "INTERVIEW" | "OFFER" | "REJECTED";
 
-interface JobApp {
-  id: string;
-  company: string;
-  position: string;
-  location: string;
-  salary: string;
-  status: StatusType;
-  appliedDate: string;
-  notes: string;
-}
-
-const initialApplications: JobApp[] = [
-  {
-    id: "1",
-    company: "Stripe",
-    position: "Staff Frontend Engineer",
-    location: "Remote / SF",
-    salary: "$180,000 - $220,000",
-    status: "PHONE_SCREEN",
-    appliedDate: "Jul 12, 2026",
-    notes: "Phone screen scheduled with engineering manager.",
-  },
-  {
-    id: "2",
-    company: "Vercel",
-    position: "Senior Fullstack Architect",
-    location: "San Francisco, CA",
-    salary: "$195,000",
-    status: "INTERVIEW",
-    appliedDate: "Jul 08, 2026",
-    notes: "System design round coming up this Thursday.",
-  },
-  {
-    id: "3",
-    company: "Linear",
-    position: "Principal Product Engineer",
-    location: "Remote",
-    salary: "$190,000",
-    status: "OFFER",
-    appliedDate: "Jun 28, 2026",
-    notes: "Received formal offer letter. Reviewing equity package.",
-  },
-  {
-    id: "4",
-    company: "OpenAI",
-    position: "Member of Technical Staff",
-    location: "San Francisco, CA",
-    salary: "$210,000 - $260,000",
-    status: "APPLIED",
-    appliedDate: "Jul 15, 2026",
-    notes: "Submitted tailored application with ATS-optimized resume.",
-  },
-];
-
 export default function ApplicationTrackerPage() {
-  const [applications, setApplications] = useState<JobApp[]>(initialApplications);
+  const [applications, setApplications] = useState<SavedApplication[]>([]);
   const [search, setSearch] = useState("");
   const [filterStatus, setFilterStatus] = useState<string>("ALL");
   const [showAddForm, setShowAddForm] = useState(false);
@@ -73,12 +20,54 @@ export default function ApplicationTrackerPage() {
   const [newSalary, setNewSalary] = useState("$160,000");
   const [newNotes, setNewNotes] = useState("");
 
+  useEffect(() => {
+    const loaded = StorageService.getApplications();
+    if (loaded.length === 0) {
+      // Seed default applications
+      const defaults: SavedApplication[] = [
+        {
+          id: "1",
+          company: "Stripe",
+          position: "Staff Frontend Engineer",
+          location: "Remote / SF",
+          salary: "$180,000 - $220,000",
+          status: "PHONE_SCREEN",
+          appliedDate: "Jul 12, 2026",
+          notes: "Phone screen scheduled with engineering manager.",
+        },
+        {
+          id: "2",
+          company: "Vercel",
+          position: "Senior Fullstack Architect",
+          location: "San Francisco, CA",
+          salary: "$195,000",
+          status: "INTERVIEW",
+          appliedDate: "Jul 08, 2026",
+          notes: "System design round coming up this Thursday.",
+        },
+        {
+          id: "3",
+          company: "Linear",
+          position: "Principal Product Engineer",
+          location: "Remote",
+          salary: "$190,000",
+          status: "OFFER",
+          appliedDate: "Jun 28, 2026",
+          notes: "Received formal offer letter. Reviewing equity package.",
+        },
+      ];
+      defaults.forEach((app) => StorageService.saveApplication(app));
+      setApplications(defaults);
+    } else {
+      setApplications(loaded);
+    }
+  }, []);
+
   const handleAddApplication = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newCompany || !newPosition) return;
 
-    const newApp: JobApp = {
-      id: Date.now().toString(),
+    const saved = StorageService.saveApplication({
       company: newCompany,
       position: newPosition,
       location: newLocation,
@@ -86,9 +75,9 @@ export default function ApplicationTrackerPage() {
       status: "APPLIED",
       appliedDate: new Date().toLocaleDateString("en-US", { month: "short", day: "2-digit", year: "numeric" }),
       notes: newNotes || "Added to tracker.",
-    };
+    });
 
-    setApplications([newApp, ...applications]);
+    setApplications([saved, ...applications]);
     setNewCompany("");
     setNewPosition("");
     setNewNotes("");
@@ -96,12 +85,15 @@ export default function ApplicationTrackerPage() {
   };
 
   const updateStatus = (id: string, newStatus: StatusType) => {
-    setApplications(
-      applications.map((app) => (app.id === id ? { ...app, status: newStatus } : app))
-    );
+    const target = applications.find((a) => a.id === id);
+    if (target) {
+      const updated = StorageService.saveApplication({ ...target, status: newStatus });
+      setApplications(applications.map((app) => (app.id === id ? updated : app)));
+    }
   };
 
   const deleteApplication = (id: string) => {
+    StorageService.deleteApplication(id);
     setApplications(applications.filter((app) => app.id !== id));
   };
 
@@ -149,7 +141,6 @@ export default function ApplicationTrackerPage() {
         </Button>
       </div>
 
-      {/* Add Form Card */}
       {showAddForm && (
         <form onSubmit={handleAddApplication} className="glass-card p-6 border-primary/30 space-y-4 animate-fade-in">
           <h3 className="text-sm font-bold text-foreground flex items-center gap-1.5">
@@ -196,7 +187,6 @@ export default function ApplicationTrackerPage() {
         </form>
       )}
 
-      {/* Filter Tabs */}
       <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
         <div className="flex items-center gap-2 overflow-x-auto pb-1 sm:pb-0">
           {["ALL", "APPLIED", "PHONE_SCREEN", "INTERVIEW", "OFFER"].map((st) => (
@@ -225,7 +215,6 @@ export default function ApplicationTrackerPage() {
         </div>
       </div>
 
-      {/* Application Cards List */}
       <div className="grid grid-cols-1 gap-4">
         {filtered.map((app) => (
           <div
