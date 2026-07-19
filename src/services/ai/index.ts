@@ -9,6 +9,16 @@ import {
   AIResponse,
 } from "./types";
 
+export class RequiresApiCredentialsError extends Error {
+  constructor(message?: string) {
+    super(
+      message ||
+        "Requires API credentials: No active AI API key found. Please configure OPENAI_API_KEY, GEMINI_API_KEY, or ANTHROPIC_API_KEY in your environment variables or Settings page."
+    );
+    this.name = "RequiresApiCredentialsError";
+  }
+}
+
 const providers: Record<string, AIProviderInterface> = {
   [AIProvider.OPENAI]: new OpenAIProvider(),
   [AIProvider.GEMINI]: new GeminiProvider(),
@@ -37,6 +47,16 @@ export async function generateAIResponse<T = any>(
     const provider = providers[providerKey];
     if (!provider) continue;
 
+    // Check if provider has active key
+    const hasKey =
+      (providerKey === AIProvider.OPENAI && process.env.OPENAI_API_KEY) ||
+      (providerKey === AIProvider.GEMINI && process.env.GEMINI_API_KEY) ||
+      (providerKey === AIProvider.CLAUDE && process.env.ANTHROPIC_API_KEY);
+
+    if (!hasKey) {
+      continue;
+    }
+
     try {
       return await provider.generateResponse(options, schema);
     } catch (error: any) {
@@ -45,41 +65,12 @@ export async function generateAIResponse<T = any>(
     }
   }
 
-  // Fallback mock response for testing/development if no API key is supplied
-  console.warn("All AI providers failed or missing API keys. Falling back to structured mock generation.");
-  return generateMockFallback<T>(options, schema);
-}
-
-function generateMockFallback<T>(
-  options: AIRequestOptions,
-  schema?: z.ZodSchema<T>
-): AIResponse<T> {
-  const isJson = options.jsonMode || !!schema;
-  let content = "AI analysis complete based on inputs provided.";
-  let parsed: any = undefined;
-
-  if (isJson && schema) {
-    parsed = {
-      score: 85,
-      summary: "Strong profile with solid core alignment.",
-      strengths: ["Clear technical stack", "Quantifiable metrics in work history"],
-      improvements: ["Add more action verbs", "Highlight leadership responsibilities"],
-      keywords: ["TypeScript", "Next.js", "React", "Node.js", "PostgreSQL"],
-      atsCompatibility: "High",
-      suggestions: ["Tailor summary to target job description"],
-    };
-    content = JSON.stringify(parsed, null, 2);
-  }
-
-  return {
-    content,
-    parsed,
-    provider: "mock-fallback",
-    model: "simulated-v1",
-    tokens: { promptTokens: 120, completionTokens: 250, totalTokens: 370 },
-    cost: 0,
-    confidence: 0.88,
-  };
+  // Strictly adhere to non-negotiable rule: Never fake AI output when keys are missing.
+  throw new RequiresApiCredentialsError(
+    lastError
+      ? `AI Provider Error: ${lastError.message || lastError}`
+      : "Requires API credentials: No active AI API key found. Please configure OPENAI_API_KEY, GEMINI_API_KEY, or ANTHROPIC_API_KEY in your environment variables or Settings page."
+  );
 }
 
 export * from "./types";

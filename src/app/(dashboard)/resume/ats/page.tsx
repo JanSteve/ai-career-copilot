@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { CheckSquare, Sparkles, AlertCircle, CheckCircle, RefreshCw, FileText, Upload } from "lucide-react";
+import Link from "next/link";
+import { CheckSquare, Sparkles, AlertCircle, CheckCircle, RefreshCw, FileText, Upload, Key, ArrowRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { processAIRequestAction } from "@/app/actions/ai";
 import { StorageService } from "@/lib/storage";
@@ -35,6 +36,8 @@ export default function ATSCheckerPage() {
   const [jobDescription, setJobDescription] = useState(SAMPLE_JD);
   const [loading, setLoading] = useState(false);
   const [analysis, setAnalysis] = useState<any>(null);
+  const [needsCredentials, setNeedsCredentials] = useState(false);
+  const [errorMsg, setErrorMsg] = useState("");
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -52,6 +55,8 @@ export default function ATSCheckerPage() {
   const runATSCheck = async () => {
     if (!resumeText || !jobDescription) return;
     setLoading(true);
+    setNeedsCredentials(false);
+    setErrorMsg("");
 
     const settings = StorageService.getSettings();
 
@@ -63,15 +68,22 @@ export default function ATSCheckerPage() {
       provider: settings.aiProvider,
     });
 
+    if (result.requiresCredentials) {
+      setNeedsCredentials(true);
+      setErrorMsg(result.error || "Requires API credentials to generate real AI analysis.");
+      setLoading(false);
+      return;
+    }
+
     if (result.success && (result.parsed || result.content)) {
       const data = result.parsed || (typeof result.content === "object" ? result.content : null);
       if (data) {
         setAnalysis({
           matchScore: data.matchScore || 88,
           rating: data.rating || "High Match",
-          matchedKeywords: data.matchedKeywords || ["React", "Next.js", "TypeScript", "Node.js", "PostgreSQL"],
-          missingKeywords: data.missingKeywords || ["GraphQL", "Docker", "AWS"],
-          recommendations: data.recommendations || ["Add measurable performance metrics to recent project bullet points."],
+          matchedKeywords: data.matchedKeywords || [],
+          missingKeywords: data.missingKeywords || [],
+          recommendations: data.recommendations || [],
         });
         StorageService.saveResume({
           title: "ATS Audit " + new Date().toLocaleDateString(),
@@ -83,32 +95,7 @@ export default function ATSCheckerPage() {
       }
     }
 
-    // Algorithmic analysis fallback
-    const jdWords = Array.from(new Set(jobDescription.match(/\b[A-Za-z0-9#+\.]{3,}\b/g) || []))
-      .filter((w) => !["with", "and", "this", "that", "from", "have", "your", "they", "will", "required"].includes(w.toLowerCase()));
-
-    const matched = jdWords.filter((w) => new RegExp(`\\b${w}\\b`, "i").test(resumeText));
-    const missing = jdWords.filter((w) => !new RegExp(`\\b${w}\\b`, "i").test(resumeText)).slice(0, 8);
-    const score = Math.min(96, Math.max(55, Math.round((matched.length / Math.max(1, jdWords.length)) * 100)));
-
-    const fallbackData = {
-      matchScore: score,
-      rating: score > 80 ? "Optimal Keyword Match" : "Moderate Alignment",
-      matchedKeywords: matched.slice(0, 10),
-      missingKeywords: missing,
-      recommendations: [
-        "Incorporate missing core terms: " + missing.slice(0, 3).join(", ") + ".",
-        "Add quantifiable metrics to recent role descriptions.",
-        "Align technical summary title explicitly with target JD.",
-      ],
-    };
-
-    setAnalysis(fallbackData);
-    StorageService.saveResume({
-      title: "ATS Audit " + new Date().toLocaleDateString(),
-      content: resumeText,
-      atsScore: score,
-    });
+    setErrorMsg(result.error || "Failed to generate AI response.");
     setLoading(false);
   };
 
@@ -125,6 +112,22 @@ export default function ATSCheckerPage() {
           Compare your resume against target job descriptions to ensure automated ATS filters pass your application.
         </p>
       </div>
+
+      {needsCredentials && (
+        <div className="p-5 rounded-2xl bg-amber-500/10 border border-amber-500/30 space-y-3 animate-fade-in">
+          <div className="flex items-center gap-2 text-amber-500 font-bold text-sm">
+            <Key className="h-4 w-4 shrink-0" /> Requires API Credentials
+          </div>
+          <p className="text-xs text-muted-foreground leading-relaxed">
+            {errorMsg}
+          </p>
+          <Link href="/settings">
+            <Button size="sm" className="bg-amber-500 text-slate-950 font-bold text-xs hover:bg-amber-400 mt-1">
+              Configure API Key in Settings <ArrowRight className="h-3.5 w-3.5 ml-1.5" />
+            </Button>
+          </Link>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         <div className="glass-card p-5 space-y-3">

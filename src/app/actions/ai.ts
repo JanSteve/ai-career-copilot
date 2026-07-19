@@ -1,9 +1,10 @@
 "use server";
 
-import { generateAIResponse } from "@/services/ai";
+import { generateAIResponse, RequiresApiCredentialsError } from "@/services/ai";
 
 export interface AIActionResult {
   success: boolean;
+  requiresCredentials?: boolean;
   content?: any;
   parsed?: any;
   provider?: string;
@@ -21,13 +22,13 @@ export async function processAIRequestAction(data: {
   provider?: "OPENAI" | "GEMINI" | "CLAUDE";
 }): Promise<AIActionResult> {
   try {
-    if (data.userApiKey) {
+    if (data.userApiKey && data.userApiKey.trim().length > 5) {
       if (data.provider === "OPENAI" || !data.provider) {
-        process.env.OPENAI_API_KEY = data.userApiKey;
+        process.env.OPENAI_API_KEY = data.userApiKey.trim();
       } else if (data.provider === "GEMINI") {
-        process.env.GEMINI_API_KEY = data.userApiKey;
+        process.env.GEMINI_API_KEY = data.userApiKey.trim();
       } else if (data.provider === "CLAUDE") {
-        process.env.ANTHROPIC_API_KEY = data.userApiKey;
+        process.env.ANTHROPIC_API_KEY = data.userApiKey.trim();
       }
     }
 
@@ -49,9 +50,11 @@ export async function processAIRequestAction(data: {
       tokens: totalTokens,
     };
   } catch (error: any) {
-    console.error(`[AI Action Error] Feature: ${data.feature}`, error);
+    const isCredentialsError = error instanceof RequiresApiCredentialsError || error?.name === "RequiresApiCredentialsError";
+
     return {
       success: false,
+      requiresCredentials: isCredentialsError,
       error: error.message || "Failed to generate AI response",
     };
   }
